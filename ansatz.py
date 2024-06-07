@@ -1,12 +1,11 @@
 import numpy as np
-import sympy as sp
-
-from hierarqcal import Qmask, Qinit
 import pennylane as qml
-
 import matplotlib.pyplot as plt
 
 from common import *
+
+from pathlib import Path
+import os
 
 # El parametro theta se utilizaria para entrenar posteriormente y hace referencia a los simbolos. Esta definido asi por defecto porque si
 # Estan basados en como define U2, V2, ... en la libreria de hierarqcal
@@ -48,12 +47,10 @@ def panstz(bits, symbols):
 def draw_circuit(circuit, name="circuit", **kwargs):
     fig, ax = qml.draw_mpl(circuit)(**kwargs)
 
-    plt.savefig(f'/home/alejandrolc/QuantumSpain/AutoQML/Hierarqcal/{name}.png')
+    if not Path("./images/").exists():
+        os.makedirs("./images/")
 
-def get_qcnn_tabular(filter="right", sc=1, sp=0, N=8, conv_ansatz=a, pool_ansatz=hierq_gates["CNOT"], n_symbols=2):
-    qcnn = Qinit(range(8)) + Qmask(filter, mapping=pool_ansatz, strides=sp) * 3
-
-    return qcnn
+    plt.savefig(f'./images/{name}.png')
 
 if __name__ == "__main__":
     # Para probar que dibuja los circuitos bien
@@ -63,16 +60,13 @@ if __name__ == "__main__":
     state_0 = [[1], [0]]
     M = state_0 * np.conj(state_0).T
 
-    for sp in range(4):
-        # hierq = get_qcnn_tabular(filter="01", sp=sp, pool_ansatz=panstz)
+    @qml.qnode(dev)
+    def qnn():
+        # Aqui se mete el circuito (qml.X() o anzatz() determinado)
+        # g([0, 1], [0]*10)
+        # hierq(backend="pennylane")
+        panstz([0, 1], [0, 0])
 
-        @qml.qnode(dev)
-        def qnn():
-            # circuito
-            # g([0, 1], [0]*10)
-            # hierq(backend="pennylane")
-            panstz([0, 1], [0, 0])
+        return qml.expval(qml.Hermitian(M, wires = [0]))
 
-            return qml.expval(qml.Hermitian(M, wires = [1]))
-
-        draw_circuit(qnn, name=f"pool_circ_sp{sp}")
+    draw_circuit(qnn, name=f"sample-circ")

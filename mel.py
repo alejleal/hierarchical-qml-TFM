@@ -4,22 +4,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 
-# import tensorflow as tf
-
-# from sklearn.base import BaseEstimator, TransformerMixin
-
-# from tensorflow.keras.utils import load_img, img_to_array
-
-# from PIL import Image
-
 import os
-
-# from pydub import AudioSegment 
-
-
-# No consigo descargarme el dataset directamente desde aqui
-# import tensorflow_datasets as 
-
 
 BASEPATH = "/home/alejandrolc/QuantumSpain/AutoQML/Data"
 GENRES = "genres_original"
@@ -27,14 +12,21 @@ GENRES_3SEC = "genres_3sec"
 IMAGES = "images_3sec_original"
 AUDIO_GENRES_BASEPATH =f"{BASEPATH}/{GENRES_3SEC}"
 
-def preprocess():
+def preprocess_audio():
     # TODO: Copiar parte de lo que hay en el main
 
+    for genre in os.listdir(AUDIO_GENRES_BASEPATH):
+        AUDIO_GENRES_PATH = f"{AUDIO_GENRES_BASEPATH}/{genre}"
+        for f in os.listdir(f"{BASEPATH}/{IMAGES}/{genre}"):
+            os.remove(f"{BASEPATH}/{IMAGES}/{genre}/{f}")
+        for audio in os.listdir(AUDIO_GENRES_PATH):
+            AUDIO_PATH = f"{AUDIO_GENRES_PATH}/{audio}"
+            y, sr = librosa.load(AUDIO_PATH)
+            mel = librosa.feature.melspectrogram(y=y, sr=sr)
 
-    pass
-
-def get_dataset():
-    pass
+            mel = np.array(librosa.power_to_db(mel, ref=np.max), dtype='float64')
+            
+            np.savetxt(f"{BASEPATH}/{IMAGES}/{genre}/{audio[:len(audio)-4]}.csv", mel, delimiter=',')
 
 def get_spectrogram_dataset(genres=["country", "rock"]):
     # Obtener los audios del dataset
@@ -56,18 +48,10 @@ def get_spectrogram_dataset(genres=["country", "rock"]):
     IMAGES_PATH =f"{BASEPATH}/{IMAGES}"
     for genre in genres:
         IMAGE_GENRE_PATH = f"{IMAGES_PATH}/{genre}"
-        # y.extend([0 if genre == "country" else 1]*len(os.listdir(IMAGE_GENRE_PATH)))
         for image in os.listdir(IMAGE_GENRE_PATH):
             IMAGE_PATH = f"{IMAGE_GENRE_PATH}/{image}"
 
-            # image = tf.keras.utils.load_img(IMAGE_PATH)
-            # img_array = tf.keras.utils.img_to_array(image)
-
             img_array = np.array(np.loadtxt(IMAGE_PATH, dtype='float64', delimiter=','))
-            # img_array = np.vstack((img_array, img_array, img_array))
-            # img_array = img_array/np.linalg.norm(img_array)
-            # img = load_img(IMAGE_PATH)
-            # img_array = img_to_array(img)
 
             x.append(img_array)
             y.append(0 if genre == genres[0] else 1)
@@ -93,36 +77,7 @@ if __name__ == "__main__":
     #             except:
     #                 f.write(audio)
 
-    for genre in os.listdir(AUDIO_GENRES_BASEPATH):
-        AUDIO_GENRES_PATH = f"{AUDIO_GENRES_BASEPATH}/{genre}"
-        for f in os.listdir(f"{BASEPATH}/{IMAGES}/{genre}"):
-            os.remove(f"{BASEPATH}/{IMAGES}/{genre}/{f}")
-        for audio in os.listdir(AUDIO_GENRES_PATH):
-            AUDIO_PATH = f"{AUDIO_GENRES_PATH}/{audio}"
-            y, sr = librosa.load(AUDIO_PATH)
-            mel = librosa.feature.melspectrogram(y=y, sr=sr)
-
-            mel = np.array(librosa.power_to_db(mel, ref=np.max), dtype='float64')
-            # mel = np.vstack((mel, mel, mel))
-
-            # plt.imsave(f"{BASEPATH}/{IMAGES}/{genre}/{audio[:len(audio)-4]}.png", mel)
-
-            # image = tf.keras.utils.load_img(f"{BASEPATH}/{IMAGES}/{genre}/{audio[:len(audio)-4]}.png")
-            # mel = tf.keras.utils.img_to_array(image)
-
-            # mel = tf.image.resize(mel, (8, 32)).numpy()[:,:,0]
-
-            # mel = np.expand_dims(mel, -1)
-            # np.repeat(mel, 3, 2)
-
-            # print(mel[:,:,0])
-
-            # im = Image.fromarray(mel)
-            # im = im.convert("L")
-
-            # im.save(f"{BASEPATH}/{IMAGES}/{genre}/{audio[:len(audio)-4]}.png")
-
-            np.savetxt(f"{BASEPATH}/{IMAGES}/{genre}/{audio[:len(audio)-4]}.csv", mel, delimiter=',')
+    preprocess_audio()
 
     # print(get_spectrogram_dataset()[0][:5])
     # ds = tfds.load('gtzan')
