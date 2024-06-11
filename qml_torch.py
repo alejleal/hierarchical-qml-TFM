@@ -1,7 +1,6 @@
 from collections import namedtuple
 import pandas as pd
 import numpy as np
-import sympy as sp
 from sklearn import preprocessing
 from sklearn.decomposition import PCA
 from sklearn.pipeline import Pipeline
@@ -12,19 +11,16 @@ from pennylane.templates.embeddings import AngleEmbedding
 import torch
 from torch import nn
 
-import matplotlib.pyplot as plt
 from sklearn.base import BaseEstimator, TransformerMixin
 import tensorflow as tf
 from mel import get_spectrogram_dataset
-from ansatz import a, b, g, panstz
+from ansatz import a, b, g, poolg
 
 import seaborn as sns
 
-import time, sys
+import time
 
 from common import *
-
-# print(torch.cuda.get_device_name(0))
 
 # TODO: 
 # Preparar wandb para presentar los datos
@@ -46,7 +42,6 @@ def get_tabular_dataset(genres=["country", "rock"]):
 
     return x, y.values
 
-# Comprobar mel.py para ver como se guardan los csv, como se leen y ver el formato en el que devuelvo la imagen para que tf se lo trague 
 class ImageResize(BaseEstimator, TransformerMixin):
     """
     Resizes an image
@@ -69,21 +64,16 @@ class ImageResize(BaseEstimator, TransformerMixin):
         return X_squeezed
 
 # set up pennylane circuit
-def get_circuit(hierq, x=None, device="default.qubit.torch", angle_embdedding=False):
+def get_circuit(hierq, device, angle_embdedding=False):
     # TODO: Manejar los keyword arguments: device, angle_embedding/embedding?, diff_method, interface, 
     #       Desempaquetar los parametros usando un diccionario con el operador ** i.e fun(**args) === fun(key1=arg1, key2=arg2, ...)
     #       Podria hacer tambien que aqui se llamase a una funcion en lugar de que los parametros vayan pasando de llamada en llamada...
     #       Debe tener todos los parametros necesarios para construir el circuito parametrizado
     dev = qml.device(device, wires=hierq.tail.Q) # default.qubit.torch
 
-    # TODO: Meter los simbolos/parametros como parametro de la funcion. De esta manera no tendria que crear el circuito una y otra vez?
     @qml.qnode(dev, interface="torch") #, diff_method="adjoint")
     def circuit(x, symbols):
         hierq.set_symbols(symbols)
-
-        # if isinstance(next(hierq.get_symbols(), False), sp.Symbol):
-        #     # Pennylane doesn't support symbolic parameters, so if no symbols were set (i.e. they are still symbolic), we initialize them randomly
-        #     hierq.set_symbols(np.random.uniform(0, 2 * np.pi, hierq.n_symbols))
 
         if x is not None:
             if angle_embdedding:
@@ -93,57 +83,43 @@ def get_circuit(hierq, x=None, device="default.qubit.torch", angle_embdedding=Fa
         hierq(backend="pennylane")  # This executes the compute graph in order
         
         # o = [[1], [0]] * np.conj([[1], [0]]).T
-        # return qml.expval(qml.Hermitian(o, wires=[0]))
+        # return qml.expval(qml.Hermitian(o, wires=hierq.head.Q[0]))
         return qml.probs(wires=hierq.head.Q[0])
 
     return circuit
 
 
 # set up train loop
-# @torch.jit.script
-def train(x, y, circuit, symbols, N=70, lr=0.1, verbose=True, device="default.qubit.torch"):
-    # n_symbols = motif.n_symbols
-    # if n_symbols > 0:
-    opt = torch.optim.Adam([symbols], lr=lr)
-    for it in range(N):
+def train(x, y, circuit, symbols, epochs=50, lr=0.1, verbose=True):
+    opt = torch.optim.Adam([symbols], lr)
+    loss = nn.BCELoss()
+
+    tensor_y = torch.tensor(y, dtype=torch.double, device='cuda')
+    
+    for it in range(epochs):
         opt.zero_grad()
-        loss = objective_function(circuit, symbols, x, y)
-        loss.backward()
+
+        y_hat = circuit(x, symbols)
+        loss_eval = loss(y_hat[:, 1], tensor_y)    # y_hat[:, 1]
+        loss_eval.backward()
+
         opt.step()
-        if verbose:
-            if it % 10 == 0:
-                print(f"Loss at step {it}: {loss}")
-    # else:
-    #     symbols = None
-    #     loss = objective_function(motif, [], x, y)
+
+        # if verbose:
+        #     if it % 10 == 0:
+        #         print(f"Loss at step {it}: {loss}")
+
     return symbols, loss
 
-# specify objective function
-def objective_function(circuit, symbols, x, y):
-    # motif.set_symbols(symbols)
-    # circuit = get_circuit(motif, x, device)
-    y_hat = circuit(x, symbols)
-    # cross entropy loss
-    # m = nn.Sigmoid()
-    loss = nn.BCELoss()
-    # index 1 corresponds to predictions for being in class 1
-    # use mse
-    # loss = nn.MSELoss()
-    # print(y_hat.shape)
-    # print(y)
-    loss = loss(y_hat[:, 1], torch.tensor(y, dtype=torch.double))       # y.values en el original
-    # loss = loss(m(y_hat[:,1]),torch.tensor(y.values,dtype=torch.double))
-    return loss
-
 # TODO: conseguir el numero de simbolos directamente del ansatz
-def get_qcnn(stride=1, step=1, offset=0, conv_ansatz=a, pool_ansatz=hierq_gates["CNOT"], filter="right", share_weights=True):
-    panstz = Qunitary(function=pool_ansatz, n_symbols=2, arity=2)
+def get_qcnn(conv, pool, stride=1, step=1, offset=0, filter="right", share_weights=True):
+    panstz = Qunitary(function=pool, n_symbols=2, arity=2)
     qcnn = (Qinit(range(8)) + 
             (Qcycle(
                 stride=stride,
                 step=step,
                 offset=offset,
-                mapping=Qunitary(conv_ansatz, n_symbols=10, arity=2),
+                mapping=Qunitary(conv, n_symbols=10, arity=2),
                 share_weights=share_weights
             )
             + Qmask(filter, mapping=panstz)
@@ -169,18 +145,6 @@ def get_qcnn_tabular(filter="right", sc=1, sp=0, N=8, conv_ansatz=a, pool_ansatz
     )
 
     return qcnn
-
-
-def get_specs(circuit, theta=[0]*1000, shared_weights=True):
-    specs = qml.specs(circuit)(theta)
-
-    nwires = specs['num_used_wires']
-    nparams = specs['num_trainable_params']
-
-    if shared_weights:
-        nparams = nparams/nwires
-
-    return nwires, nparams
 
 def tabular_test(runs=1, epochs=50):
     x, y = get_tabular_dataset()
@@ -226,7 +190,7 @@ def tabular_test(runs=1, epochs=50):
                     qcnn = get_qcnn_tabular(filter=filter, sc=sc, sp=sp)
 
                     # train qcnn
-                    symbols, loss = train(dataset.x_train, dataset.y_train, qcnn, N=epochs, verbose=False)
+                    symbols, loss = train(dataset.x_train, dataset.y_train, qcnn, epochs=epochs, verbose=False)
 
                     # get predictions
                     circuit = get_circuit(qcnn, dataset.x_test)
@@ -246,21 +210,28 @@ def tabular_test(runs=1, epochs=50):
                 res[sp + 4*j][sc] = final_accuracy
     return res
 
-def image_test(runs=1, epochs=50):
-    # TODO: keyword argument para el nombre del heatmap
+def image_test(runs=1, epochs=50, **kwargs):
     res = pd.DataFrame(index=GENRES, columns=GENRES)
+
+    hierq_params = {
+        "conv": g,
+        "pool": poolg,
+        "step": 7,
+        "filter": "right"
+    }
+
+    pipeline_image = Pipeline([
+        ("scaler", ImageResize(size=256))
+    ])
 
     for genre_pair in genre_combinations:
         x, y = get_spectrogram_dataset(genre_pair)
 
-        pipeline_image = Pipeline([
-            ("scaler", ImageResize(size=256))
-        ])
-
         cummulative_acc = 0
+        cummulative_trtime = 0
 
         for i in range(runs):
-            # dividir el dataset
+            # dataset premaration
             Samples = namedtuple("samples", ["x_train", "x_test", "y_train", "y_test"])
 
             image_samples_raw = Samples(*train_test_split(x, y, train_size=0.7))
@@ -274,27 +245,33 @@ def image_test(runs=1, epochs=50):
 
             dataset = image_samples_preprocessed
 
-            # plot circuit
-            # fig, ax = qml.draw_mpl(get_circuit(qcnn))()
-            # plt.savefig(f'/home/alejandrolc/QuantumSpain/AutoQML/Hierarqcal/qml_ex.png')
+            # x = torch.tensor(dataset.x_train, dtype=torch.double, device='cuda')
+            # y = torch.tensor(dataset.y_train, dtype=torch.double, device='cuda')
 
-            qcnn = get_qcnn(step=7, filter="10", conv_ansatz=g, pool_ansatz=panstz)
+            # x_test = torch.tensor(dataset.x_test, dtype=torch.double, device='cuda')
 
-            # TODO: Inicializacion de los parametros (sería conveniente hacerlo dentro del train)
+            # circuit and parameter preparation
+            qcnn = get_qcnn(**hierq_params)
+
+            # parameter initialization
             n_symbols = qcnn.n_symbols
-            symbols = torch.rand(n_symbols, requires_grad=True)
+            symbols = torch.rand(n_symbols, requires_grad=True, device='cuda')
 
-            circuit = get_circuit(qcnn)
+            # build the circuit
+            circuit = get_circuit(qcnn, device="default.qubit.torch")
 
             # train qcnn
-            symbols, loss = train(dataset.x_train, dataset.y_train, circuit, symbols, N=epochs, verbose=False)
+            t0 = time.time()
+            symbols, loss = train(dataset.x_train, dataset.y_train, circuit, symbols, epochs=epochs, verbose=False)
+            cummulative_trtime += (time.time() - t0)
 
             # get predictions
-            # circuit = get_circuit(qcnn, dataset.x_test)
             y_hat = circuit(dataset.x_test, symbols)
 
             # evaluate
-            y_hat = torch.argmax(y_hat, axis=1).detach().numpy()
+            y_hat = torch.argmax(y_hat, axis=1).cpu().detach().numpy()
+            # y_hat = torch.round(y_hat).detach().numpy()
+
             accuracy = sum(
                 [y_hat[k] == dataset.y_test[k] for k in range(len(y_hat))] # y_test.values en el original
             ) / len(y_hat)
@@ -303,19 +280,20 @@ def image_test(runs=1, epochs=50):
             cummulative_acc += accuracy
         
         final_accuracy = cummulative_acc / runs
+        avr_trtime = cummulative_trtime / runs
         res[genre_pair[0]][genre_pair[1]] = final_accuracy
         print(f"{genre_pair[0]} vs {genre_pair[1]} - accuracy: {final_accuracy}\n")
+        print(f"#####\nTrain time: {avr_trtime} s\n#####")
 
     res = res.fillna(0)
-    # print(res)
 
-    # Mascara para que solo salga el mapa de calor para la matriz triangular inferior
+    # heatmap mask
     mask = np.triu(np.ones_like(res, dtype=bool))
 
     heatmap = sns.heatmap(res, cmap = 'viridis', vmin=0, vmax=1, annot=True, mask=mask)
 
     figure = heatmap.get_figure()
-    figure.savefig('heatmap_genres_test_refactor.png', dpi=400)
+    figure.savefig(f'heatmap_genres_{kwargs["heatmap_name"]}.png', dpi=400)
 
     return res
 
@@ -347,7 +325,7 @@ def random_search_test(n=10):
         # fig, ax = qml.draw_mpl(get_circuit(qcnn))()
         # plt.savefig(f'/home/alejandrolc/QuantumSpain/AutoQML/Hierarqcal/qml_ex.png')
 
-        qcnn = get_qcnn(step=7, filter="10", conv_ansatz=g, pool_ansatz=panstz)
+        qcnn = get_qcnn(step=7, filter="10", conv=g, pool=poolg)
 
         # train qcnn
         # symbols, loss = train(dataset.x_train, dataset.y_train, qcnn, N=epochs, verbose=False)
@@ -399,22 +377,7 @@ def random_search_test(n=10):
 
     return None
 
-def test_params():
-    ansatz = g
-
-    maxarray = [0]*1000
-
-    dev = qml.device("default.qubit", wires=2)
-
-    @qml.qnode(dev)
-    def circuit(theta):
-        ansatz(list(range(1000)), maxarray)
-        return qml.expval(qml.PauliZ(1))
-
-    print(get_specs(circuit))
-
 if __name__ == "__main__":
-    # dev = qml.device("lightning.gpu", wires=2)
     runs = 10
     epochs = 50
     genres = ["country", "rock"]
@@ -429,15 +392,10 @@ if __name__ == "__main__":
         pass
 
     ### Imagenes
-    t0 = time.time()
-    res = image_test(runs=runs, epochs=epochs)
-    print(f"#####\nTrain time: {time.time() - t0} s\n#####")
+    res = image_test(runs=runs, epochs=epochs, heatmap_name="test")
 
     ### Tabular
     # res = tabular_test(runs, epochs)
 
     ### Global
     # res = random_search_test()
-
-    # print(res)
-    # print("circ_specs: ", qml.specs(circuit)())

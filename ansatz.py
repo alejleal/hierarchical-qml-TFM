@@ -7,9 +7,7 @@ from common import *
 from pathlib import Path
 import os
 
-# El parametro theta se utilizaria para entrenar posteriormente y hace referencia a los simbolos. Esta definido asi por defecto porque si
-# Estan basados en como define U2, V2, ... en la libreria de hierarqcal
-## TODO: No se como deberia hacerse bien esto pero esta practicamente copiado de la libreria
+
 ## Importante: los parametros tienen que ser con esos nombres, si no, se queja
 def a(bits, symbols=None):
     qml.RY(symbols[0], wires=bits[0])
@@ -38,7 +36,7 @@ def g(bits, symbols=None):
     qml.RZ(symbols[9], wires=bits[1])
 
 # Pooling ansatz
-def panstz(bits, symbols): 
+def poolg(bits, symbols): 
     qml.CRZ(symbols[0], wires=[bits[0], bits[1]])
     qml.PauliX(wires=bits[0])
     qml.CRX(symbols[1], wires=[bits[0], bits[1]])
@@ -52,10 +50,36 @@ def draw_circuit(circuit, name="circuit", **kwargs):
 
     plt.savefig(f'./images/{name}.png')
 
+
+def get_specs(circuit, theta=[0]*1000, shared_weights=True):
+    specs = qml.specs(circuit)(theta)
+
+    nwires = specs['num_used_wires']
+    nparams = specs['num_trainable_params']
+
+    if shared_weights:
+        nparams = nparams/nwires
+
+    return nwires, nparams
+
+def test_params():
+    ansatz = g
+
+    maxarray = [0]*1000
+
+    dev = qml.device("default.qubit", wires=2)
+
+    @qml.qnode(dev)
+    def circuit(theta):
+        ansatz(list(range(1000)), maxarray)
+        return qml.expval(qml.PauliZ(1))
+
+    print(get_specs(circuit))
+
 if __name__ == "__main__":
     # Para probar que dibuja los circuitos bien
     nqubits = 2
-    dev = qml.device("default.qubit", wires = nqubits)
+    dev = qml.device("default.qubit.torch", wires = nqubits)
 
     state_0 = [[1], [0]]
     M = state_0 * np.conj(state_0).T
@@ -65,7 +89,7 @@ if __name__ == "__main__":
         # Aqui se mete el circuito (qml.X() o anzatz() determinado)
         # g([0, 1], [0]*10)
         # hierq(backend="pennylane")
-        panstz([0, 1], [0, 0])
+        poolg([0, 1], [0, 0])
 
         return qml.expval(qml.Hermitian(M, wires = [0]))
 
