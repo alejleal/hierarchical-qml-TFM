@@ -94,7 +94,7 @@ def train(x, y, circuit, symbols, epochs=50, lr=0.1, verbose=True):
     opt = torch.optim.Adam([symbols], lr)
     loss = nn.BCELoss()
 
-    tensor_y = torch.tensor(y, dtype=torch.double, device='cuda')
+    tensor_y = torch.tensor(y, dtype=torch.double)
     
     for it in range(epochs):
         opt.zero_grad()
@@ -255,10 +255,10 @@ def image_test(runs=1, epochs=50, **kwargs):
 
             # parameter initialization
             n_symbols = qcnn.n_symbols
-            symbols = torch.rand(n_symbols, requires_grad=True, device='cuda')
+            symbols = torch.rand(n_symbols, requires_grad=True)
 
             # build the circuit
-            circuit = get_circuit(qcnn, device="default.qubit.torch")
+            circuit = get_circuit(qcnn, device="lightning.qubit")
 
             # train qcnn
             t0 = time.time()
@@ -269,7 +269,7 @@ def image_test(runs=1, epochs=50, **kwargs):
             y_hat = circuit(dataset.x_test, symbols)
 
             # evaluate
-            y_hat = torch.argmax(y_hat, axis=1).cpu().detach().numpy()
+            y_hat = torch.argmax(y_hat, axis=1).detach().numpy()
             # y_hat = torch.round(y_hat).detach().numpy()
 
             accuracy = sum(
@@ -281,7 +281,9 @@ def image_test(runs=1, epochs=50, **kwargs):
         
         final_accuracy = cummulative_acc / runs
         avr_trtime = cummulative_trtime / runs
-        res[genre_pair[0]][genre_pair[1]] = final_accuracy
+
+        res.loc[genre_pair[1], genre_pair[0]] = final_accuracy
+        # res[genre_pair[0]][genre_pair[1]] = final_accuracy
         print(f"{genre_pair[0]} vs {genre_pair[1]} - accuracy: {final_accuracy}\n")
         print(f"#####\nTrain time: {avr_trtime} s\n#####")
 
@@ -380,7 +382,6 @@ def random_search_test(n=10):
 if __name__ == "__main__":
     runs = 10
     epochs = 50
-    genres = ["country", "rock"]
 
     # device = sys.argv[1]
 
