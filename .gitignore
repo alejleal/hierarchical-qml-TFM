@@ -1,6 +1,8 @@
-./out*/
-./__pycache__/
-./images/
+./out*
+./__pycache__
+./images
 
 *.sh
 slurm-*.out
+
+*.whl
