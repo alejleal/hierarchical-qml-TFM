@@ -26,7 +26,7 @@ def experiment(runs, epochs, training, lr, combinations, verbose, **kwargs):
     # rng and seed preparation (for jax)
     if training == 'jax':
         rng = jax.random.PRNGKey(1234)
-        key, subkey = jax.random.split(rng)
+        key, _ = jax.random.split(rng)
 
     for genre_pair in combinations:
         cummulative_acc = 0
@@ -39,7 +39,7 @@ def experiment(runs, epochs, training, lr, combinations, verbose, **kwargs):
             ds = dataset(genre_pair)
 
             if training == 'jax':
-                accuracy, params, trtime, key = run_jax(ds, epochs, lr, key, verbose)
+                accuracy, params, trtime, key = run_jax(ds, epochs, key, verbose)
             elif training == 'torch':
                 accuracy, params, trtime = run_torch(ds, epochs, lr, verbose)
 
@@ -70,26 +70,31 @@ def experiment(runs, epochs, training, lr, combinations, verbose, **kwargs):
     return res
 
 if __name__ == "__main__":
+    import random
+
     # TODO: Especificar aqui las comparaciones que se quieren hacer
     experiments = [
+        # {
+        #     'runs': 5,
+        #     'epochs': 50,
+        #     'training': 'torch',
+        #     'lr': 0.1,
+        #     'combinations': genre_combinations,
+        #     'heatmap_name': 'torch',
+        #     'verbose': False
+        # },
         {
-            'runs': 10,
+            'runs': 5,
             'epochs': 50,
-            'training': 'torch',
-            'lr': 0.1,
+            'training': 'jax',
+            'lr': 0.001, # no se utiliza en este caso
             'combinations': genre_combinations,
-            'heatmap_name': 'torch',
-            'verbose': False
+            'heatmap_name': 'jax',
+            'verbose': True
         }
     ]
     
-    experiment_params = {
-        'runs': 2,
-        'epochs': 50,
-        'training': 'jax',
-        'lr': 0.001,
-        'heatmap_name': 'jax'
-    }
 
-    for ep in experiments: 
+
+    for ep in experiments:
         experiment(**ep)

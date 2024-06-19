@@ -16,13 +16,11 @@ def train(x, y, circuit, symbols, epochs, lr, verbose=True):
     opt = torch.optim.Adam([symbols], lr)
     loss = nn.BCELoss()
 
-    tensor_y = torch.tensor(y, dtype=torch.double)
-    
     for it in range(epochs):
         opt.zero_grad()
 
         y_hat = circuit(x, symbols)
-        loss_eval = loss(y_hat, tensor_y)    # y_hat[:, 1]
+        loss_eval = loss(y_hat, y)    # y_hat[:, 1]
         loss_eval.backward()
 
         opt.step()
@@ -34,18 +32,17 @@ def train(x, y, circuit, symbols, epochs, lr, verbose=True):
     return symbols, loss
 
 def run_torch(dataset, epochs, lr, verbose=False):
-    # qcnn = get_qcnn(**hierq_params)
-
     # parameter initialization
     n_symbols = qcnn.n_symbols
     symbols = torch.rand(n_symbols, requires_grad=True)
 
     # build the circuit
     # circuit = get_circuit(qcnn, device="default.qubit")
+    y_train_tensor = torch.tensor(dataset.y_train, dtype=torch.double)
 
     # train qcnn
     t0 = time.time()
-    symbols, loss = train(dataset.x_train, dataset.y_train, circuit, symbols, epochs, lr, verbose=verbose)
+    symbols, loss = train(dataset.x_train, y_train_tensor, circuit, symbols, epochs, lr, verbose=verbose)
     trtime = time.time() - t0
 
     # get predictions

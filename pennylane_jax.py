@@ -14,15 +14,17 @@ device = 'default.qubit'
 interface = 'jax'
 circuit = get_circuit(get_qcnn(g, poolg), device, interface)
 
-# circuit = jax.jit(jax.vmap(circuit, in_axes=(0, None)))
+opt = optax.adam(learning_rate=0.1)
+
+circuit = jax.jit(jax.vmap(circuit, in_axes=(0, None)))
 
 @jax.jit
 def cross_entropy(predictions, targets, epsilon=1e-12):
     predictions = jnp.clip(predictions, epsilon, 1. - epsilon)
-    N = predictions.shape[0]
+    # N = predictions.shape[0]
     # print(predictions.shape, targets.shape)
 
-    ce = -jnp.sum(targets*jnp.log(predictions+1e-9))/N
+    ce = -jnp.mean(targets*jnp.log(predictions) + (1 - targets)*jnp.log(1-predictions))
     return ce
 
 @jax.jit
@@ -34,40 +36,51 @@ def loss_fn(params, data, targets):
     
     return loss
 
+value_and_grad_fn = jax.value_and_grad(loss_fn)
+
 ## completely jitted
 @jax.jit
 def update_step_jit(i, args):
-    params, opt_state, data, targets, opt, print_training = args
+    params, opt_state, data, targets, print_training = args
 
-    loss_val, grads = jax.value_and_grad(loss_fn)(params, data, targets)
+    # value_and_grad = jax.value_and_grad(loss_fn)
+    # value_and_grad_vectorized = jax.vmap(value_and_grad, in_axes = (jax.tree_util.tree_map(lambda x: None, params), 0, 0))
+
+    # loss_val, grad = value_and_grad_vectorized(params, data, targets)
+    # grads = jax.tree_util.tree_map(jnp.mean, grad)
+
+    loss_val, grads = value_and_grad_fn(params, data, targets)
     updates, opt_state = opt.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
 
-    def print_fn():
-        jax.debug.print("Step: {i}  Loss: {loss_val}", i=i, loss_val=loss_val)
-        y_hat = circuit(data, params)
+    # def print_fn():
+    #     # jax.debug.print("Step: {i}  Loss: {loss_val}", i=i, loss_val=loss_val)
+    #     res = circuit(data, params)
 
-        y_hat = jnp.where(y_hat >= 0.5, 1, 0)
-        accuracy = jnp.mean(jnp.where(y_hat == targets, 1, 0))
+    #     y_hat = jnp.where(res >= 0.5, 1, 0)
+    #     accuracy = jnp.mean(jnp.where(y_hat == targets, 1, 0))
 
-        jax.debug.print("Accuracy: {accuracy}", accuracy=accuracy)
+    #     # def print_res(): jax.debug.print("Preds: {y_hat}", y_hat=y_hat)
+    #     # jax.lax.cond(accuracy > 0.6, print_res, lambda: None)
 
-    # if print_training=True, print the loss every 5 steps
-    jax.lax.cond((jnp.mod(i, 1) == 0) & print_training, print_fn, lambda: None)
+    #     jax.debug.print("Accuracy: {accuracy} - Loss: {loss}", accuracy=accuracy, loss=loss_val)
 
-    return (params, opt_state, data, targets, opt, print_training)
+    # # if print_training=True, print the loss every 5 steps
+    # jax.lax.cond((jnp.mod(i, 1) == 0) & print_training, print_fn, lambda: None)
+
+    return (params, opt_state, data, targets, print_training)
 
 @jax.jit
-def optimization_jit(params, data, targets, epochs, lr, print_training=False):
-    opt = optax.adam(learning_rate=lr)
-
+def optimization_jit(params, data, targets, epochs, print_training=False):
     opt_state = opt.init(params)
-    args = (params, opt_state, data, targets, opt, print_training)
-    (params, opt_state, _, _, _, _) = jax.lax.fori_loop(0, epochs, update_step_jit, args)
+    args = (params, opt_state, data, targets, print_training)
+    (params, opt_state, _, _, _) = jax.lax.fori_loop(0, epochs, update_step_jit, args)
 
     return params
 
-def run_jax(dataset, epochs, lr, key, verbose=False):
+def run_jax(dataset, epochs, key, verbose=False):
+    # print(jnp.array([1.]).dtype)
+
     key, subkey = jax.random.split(key)
 
     # dataset preparation
@@ -79,7 +92,7 @@ def run_jax(dataset, epochs, lr, key, verbose=False):
 
     # training loop
     t0 = time.time()
-    params = optimization_jit(params, data, targets, epochs, lr, print_training=verbose)
+    params = optimization_jit(params, data, targets, epochs, print_training=verbose)
     trtime = time.time() - t0
 
     # get predictions
