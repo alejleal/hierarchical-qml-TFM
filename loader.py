@@ -50,6 +50,40 @@ def preprocess_audio():
             
             np.savetxt(f"{BASEPATH}/{IMAGES}/{genre}/{audio[:len(audio)-4]}.csv", mel, delimiter=',')
 
+def preprocess_yaseen():
+    BASEPATH = "/home/alejandrolc/QuantumSpain/AutoQML/Data/Yaseen"
+    ORIGINAL = "original"
+    IMAGES = "images"
+    AUDIO_BASEPATH =f"{BASEPATH}/{ORIGINAL}"
+
+    for audio_type in os.listdir(AUDIO_BASEPATH):
+        AUDIO_GENRES_PATH = f"{AUDIO_BASEPATH}/{audio_type}"
+        for f in os.listdir(f"{BASEPATH}/{IMAGES}/{audio_type}"):
+            os.remove(f"{BASEPATH}/{IMAGES}/{audio_type}/{f}")
+        for audio in os.listdir(AUDIO_GENRES_PATH):
+            AUDIO_PATH = f"{AUDIO_GENRES_PATH}/{audio}"
+            try:
+                y, sr = librosa.load(AUDIO_PATH)
+                # print(librosa.get_duration(y=y, sr=sr), len(y))
+                if len(y) > 3 * sr:
+                    y = y[:3*sr]
+                else:
+                    # print(len(y))
+                    y_ = np.zeros((3*sr))
+                    y_[:len(y)] = y
+                    y = y_
+
+                print(len(y))
+
+                mel = librosa.feature.melspectrogram(y=y, sr=sr)
+
+                mel = np.array(librosa.power_to_db(mel, ref=np.max), dtype='float64')
+                
+                np.savetxt(f"{BASEPATH}/{IMAGES}/{audio_type}/{audio[:len(audio)-4]}.csv", mel, delimiter=',')
+            except Exception as e:
+                with open("errors.txt", mode='a') as f:
+                    f.write(f"{audio}\n {e}\n")
+
 def get_spectrogram_dataset(genres=["country", "rock"]):
     x, y = [], []
 
@@ -68,6 +102,84 @@ def get_spectrogram_dataset(genres=["country", "rock"]):
     x = np.array(x)
 
     return x, y
+
+def get_spectrogram_dataset_yaseen(types):
+    x, y = [], []
+
+    BASEPATH = "/home/alejandrolc/QuantumSpain/AutoQML/Data/Yaseen_binary"
+    ORIGINAL = "original"
+    IMAGES = "images"
+    # AUDIO_BASEPATH =f"{BASEPATH}/{ORIGINAL}"
+
+    # max_dur = 0
+
+    i = 0
+
+    IMAGES_PATH =f"{BASEPATH}/{IMAGES}"
+    for genre in types:
+        IMAGE_GENRE_PATH = f"{IMAGES_PATH}/{genre}"
+        for image in os.listdir(IMAGE_GENRE_PATH):
+            IMAGE_PATH = f"{IMAGE_GENRE_PATH}/{image}"
+
+            img_array = np.array(np.loadtxt(IMAGE_PATH, dtype='float64', delimiter=','))
+
+            # max_dur = np.max(img_array.shape[1], max_dur)
+            # print(img_array.shape)
+            # if genre == "N":
+            #     x.append(img_array)
+            #     x.append(img_array)
+            #     x.append(img_array)
+            #     y.append(0 if genre == types[0] else 1)
+            #     y.append(0 if genre == types[0] else 1)
+            #     y.append(0 if genre == types[0] else 1)
+
+            if i % 4 == 0 and genre == "NOTN":
+                x.append(img_array)
+                y.append(0 if genre == types[0] else 1)
+
+            if genre == "N":
+                x.append(img_array)
+                y.append(0 if genre == types[0] else 1)
+
+            i += 1
+
+
+    y = np.array(y)
+    x = np.array(x)
+
+    print(x.shape)
+
+    # lens = [len(l) for l in x]
+    # print(lens)
+    # maxlen = max(lens)
+    # print(maxlen)
+    # x_ = -80*np.ones((len(x), maxlen))
+    # mask = np.arange(maxlen) < np.array(lens)[:,None]
+    # x_[mask] = np.concatenate(x)
+
+    # x = x_
+
+    return x, y
+
+def dataset_yaseen(pair):
+    pipeline_image = Pipeline([
+        ("scaler", ImageResize(size=256))
+    ])
+    
+    Samples = namedtuple("samples", ["x_train", "x_test", "y_train", "y_test"])
+
+    x, y = get_spectrogram_dataset_yaseen(pair)
+
+    image_samples_raw = Samples(*train_test_split(x, y, train_size=0.7))
+
+    image_samples_preprocessed = Samples(
+        pipeline_image.fit_transform(image_samples_raw.x_train),
+        pipeline_image.transform(image_samples_raw.x_test),
+        image_samples_raw.y_train,
+        image_samples_raw.y_test,
+    )
+
+    return image_samples_preprocessed
 
 ## data preproccessing
 def dataset(genre_pair = ["country", "rock"]):
@@ -90,6 +202,24 @@ def dataset(genre_pair = ["country", "rock"]):
 
     return image_samples_preprocessed
 
+def full_dataset(genre_pair):
+    pipeline_image = Pipeline([
+        ("scaler", ImageResize(size=256))
+    ])
+    
+    Samples = namedtuple("samples", ["x", "y"])
+
+    x, y = get_spectrogram_dataset(genre_pair)
+
+    image_samples_raw = Samples(x, y)
+
+    image_samples_preprocessed = Samples(
+        pipeline_image.fit_transform(image_samples_raw.x),
+        image_samples_raw.y
+    )
+
+    return image_samples_preprocessed
+
 if __name__ == "__main__":
-    # preprocess_audio()
+    # preprocess_yaseen()
     pass

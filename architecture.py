@@ -19,6 +19,7 @@ def a(bits, symbols=None):
     qml.RY(symbols[0], wires=bits[0])
     qml.RY(symbols[1], wires=bits[1])
     qml.CNOT(wires=[bits[0], bits[1]])
+    # qml.Barrier([bits[0], bits[1]])
 
 def b(bits, symbols=None):
     qml.Hadamard(bits[0])
@@ -47,22 +48,37 @@ def poolg(bits, symbols):
     qml.PauliX(wires=bits[0])
     qml.CRX(symbols[1], wires=[bits[0], bits[1]])
 
+def cnot(bits, symbols):
+    qml.CNOT(wires=[bits[0], bits[1]])
+
+n_params = {
+    'a': 2,
+    'b': 2,
+    'g': 10,
+    'poolg': 2,
+    'cnot': 0
+}
+
 
 ## Hierarchies
 
 def get_qcnn(conv, pool, stride=1, step=1, offset=0, filter="right", wires=8, share_weights=True):
-    panstz = Qunitary(function=pool, n_symbols=2, arity=2)
+    # Por ahora todas los ansatzs son de aridad 2 asi que se queda asi de momento
+    pool_n_symbols = n_params[pool.__name__]
+    pool_map = Qunitary(function=pool, n_symbols=pool_n_symbols, arity=2)
+
+    conv_n_symbols = n_params[conv.__name__]
     qcnn = (Qinit(range(wires)) + 
             (Qcycle(
                 stride=stride,
                 step=step,
                 offset=offset,
-                mapping=Qunitary(conv, n_symbols=10, arity=2),
+                mapping=Qunitary(conv, n_symbols=conv_n_symbols, arity=2),
                 share_weights=share_weights
             )
-            + Qmask(filter, mapping=panstz)
+            + Qmask(filter, mapping=pool_map)
         )
-        * 3 # jnp.log2(n_wires) -> a entero
+        * (wires - 1).bit_length() # Consigue el ceil(log2(wires)) para el numero de capas
     )
 
     return qcnn
@@ -101,4 +117,51 @@ def get_circuit(qcnn, device, interface):
 #     return qml.probs(wires=qcnn.head.Q[0])
 
 if __name__ == "__main__":
-    pass
+    device = "default.qubit.torch"
+    interface = 'torch'
+    wires = 4
+    qcnn = get_qcnn(a, cnot, wires=wires)
+    circuit = get_circuit(qcnn, device, interface)
+
+
+    drawer = qml.drawer.MPLDrawer(n_wires=4, n_layers=8)
+
+    drawer.label(range(4))
+
+    embed_box_options = {'facecolor': 'green', 'edgecolor': 'darkgreen', 'linewidth': 3}
+    conv_box_options = {'facecolor': 'lightcoral', 'edgecolor': 'maroon', 'linewidth': 3}
+    pool_options = {'linewidth': 3, 'color': 'teal'}
+    text_options = {'fontsize': 'xx-large', 'color': 'white'}
+
+    # drawer.box_gate(layer=0, wires=[0, 1, 2, 3], text=r"$|\Psi\rangle$", box_options=embed_box_options)
+    drawer.box_gate(layer=0, wires=[0, 1], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
+    drawer.box_gate(layer=1, wires=[1, 2], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
+    drawer.box_gate(layer=2, wires=[2, 3], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
+    drawer.box_gate(layer=3, wires=[0, 3], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
+
+    # drawer.Barrier()
+
+    drawer.CNOT(layer=4, wires=(2, 0), options=pool_options)
+    drawer.CNOT(layer=5, wires=(3, 1), options=pool_options)
+
+    drawer.box_gate(layer=6, wires=[0, 1], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
+
+    drawer.CNOT(layer=7, wires=(1, 0), options=pool_options)
+
+    # drawer.measure(layer=7, wires=0)
+
+    # drawer.ctrl(layer=3, wires=[1, 3], control_values=[True, False])
+    # drawer.box_gate(
+    #     layer=3, wires=2, text="H", box_options={"zorder": 4}, text_options={"zorder": 5}
+    # )
+
+    # drawer.ctrl(layer=4, wires=[1, 2])
+
+    # drawer.fig.suptitle('My Circuit', fontsize='xx-large')
+
+    drawer.fig.savefig("./images/circuit_test.png")
+
+
+    # fig, ax = qml.draw_mpl(circuit)(range(2**wires), range(36))
+    # fig.savefig("./images/circuit_test.png")
+    # # fig.show()

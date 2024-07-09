@@ -7,12 +7,16 @@ import pandas as pd
 from architecture import get_circuit, get_qcnn, a, b, g, poolg
 import time
 
+from biofind import run_random_search
+
+from sklearn.metrics import balanced_accuracy_score
+
 # https://pennylane.ai/qml/demos/tutorial_How_to_optimize_QML_model_using_JAX_and_JAXopt/
 # https://pennylane.ai/qml/demos/tutorial_How_to_optimize_QML_model_using_JAX_and_Optax/
 
 device = 'default.qubit'
 interface = 'jax'
-circuit = get_circuit(get_qcnn(g, poolg), device, interface)
+circuit = get_circuit(get_qcnn(g, poolg, step=2), device, interface)
 
 opt = optax.adam(learning_rate=0.1)
 
@@ -33,6 +37,7 @@ def loss_fn(params, data, targets):
 
     loss = cross_entropy(predictions, targets)
     # loss = jnp.mean(optax.losses.sigmoid_binary_cross_entropy(predictions, targets))
+    # jax.debug.print("loss_type: {type}", type=predictions.dtype)
     
     return loss
 
@@ -43,30 +48,21 @@ value_and_grad_fn = jax.value_and_grad(loss_fn)
 def update_step_jit(i, args):
     params, opt_state, data, targets, print_training = args
 
-    # value_and_grad = jax.value_and_grad(loss_fn)
-    # value_and_grad_vectorized = jax.vmap(value_and_grad, in_axes = (jax.tree_util.tree_map(lambda x: None, params), 0, 0))
-
-    # loss_val, grad = value_and_grad_vectorized(params, data, targets)
-    # grads = jax.tree_util.tree_map(jnp.mean, grad)
-
     loss_val, grads = value_and_grad_fn(params, data, targets)
     updates, opt_state = opt.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
 
-    # def print_fn():
-    #     # jax.debug.print("Step: {i}  Loss: {loss_val}", i=i, loss_val=loss_val)
-    #     res = circuit(data, params)
+    def print_fn():
+        jax.debug.print("Step: {i}  Loss: {loss_val}", i=i, loss_val=loss_val)
+        # res = circuit(data, params)
 
-    #     y_hat = jnp.where(res >= 0.5, 1, 0)
-    #     accuracy = jnp.mean(jnp.where(y_hat == targets, 1, 0))
+        # y_hat = jnp.where(res >= 0.5, 1, 0)
+        # accuracy = jnp.mean(jnp.where(y_hat == targets, 1, 0))
 
-    #     # def print_res(): jax.debug.print("Preds: {y_hat}", y_hat=y_hat)
-    #     # jax.lax.cond(accuracy > 0.6, print_res, lambda: None)
+        # jax.debug.print("Accuracy: {accuracy} - Loss: {loss}", accuracy=accuracy, loss=loss_val)
 
-    #     jax.debug.print("Accuracy: {accuracy} - Loss: {loss}", accuracy=accuracy, loss=loss_val)
-
-    # # if print_training=True, print the loss every 5 steps
-    # jax.lax.cond((jnp.mod(i, 1) == 0) & print_training, print_fn, lambda: None)
+    # if print_training=True, print the loss every 5 steps
+    jax.lax.cond((jnp.mod(i, 1) == 0) & print_training, print_fn, lambda: None)
 
     return (params, opt_state, data, targets, print_training)
 
@@ -78,31 +74,35 @@ def optimization_jit(params, data, targets, epochs, print_training=False):
 
     return params
 
-def run_jax(dataset, epochs, key, verbose=False):
-    # print(jnp.array([1.]).dtype)
-
+def run_jax(ds, epochs, key, verbose=False):
     key, subkey = jax.random.split(key)
 
     # dataset preparation
-    data = dataset.x_train
-    targets = dataset.y_train
+    data = ds.x_train
+    targets = ds.y_train
 
     # initial parameters
-    params = jax.random.uniform(subkey, shape=(36,))
+    params = jax.random.uniform(subkey, shape=(36,))*jnp.pi
+    t0 = time.time()
+    # partial_accuracy, params = run_random_search(fds.x, fds.y, key, 500, verbose) 
+
+    # print(partial_accuracy)
 
     # training loop
-    t0 = time.time()
     params = optimization_jit(params, data, targets, epochs, print_training=verbose)
     trtime = time.time() - t0
 
     # get predictions
-    y_hat = circuit(dataset.x_test, params)
+    y_hat = circuit(ds.x_test, params)
 
     # evaluate
     # y_hat = jnp.argmax(y_hat, axis=1)
     y_hat = jnp.where(y_hat >= 0.5, 1, 0)
 
-    accuracy = jnp.mean(jnp.where(y_hat == dataset.y_test, 1, 0))
+    accuracy = jnp.mean(jnp.where(y_hat == ds.y_test, 1, 0))
+    
+    bal_acc=balanced_accuracy_score(ds.y_test, y_hat)
+    print(bal_acc)
 
     return accuracy, params, trtime, key
 
@@ -184,6 +184,7 @@ if __name__ == "__main__":
             accuracy = jnp.mean(jnp.where(y_hat == dataset.y_test, 1, 0))
             #     [y_hat[k] == ds.y_test[k] for k in range(len(y_hat))] # y_test.values en el original
             # ) / len(y_hat)
+            
 
             trtime = t1 - t0
             cummulative_trtime += trtime
