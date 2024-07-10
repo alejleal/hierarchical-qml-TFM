@@ -1,8 +1,14 @@
-./out/*
-./__pycache__/*
-./images/*
+/out
+/__pycache__
+/images
+/PSO
+/old
 
 *.sh
 slurm-*.out
 
 *.whl
+*.txt
+
+biofind.py
+qml_example.py
