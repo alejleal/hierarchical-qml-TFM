@@ -42,6 +42,30 @@ def g(bits, symbols=None):
     qml.RZ(symbols[8], wires=bits[0])
     qml.RZ(symbols[9], wires=bits[1])
 
+def genrot(bits, symbols=None):
+    qml.RZ(symbols[0], wires=bits[0])
+    qml.RY(symbols[1], wires=bits[0])
+    qml.RZ(symbols[2], wires=bits[0])
+
+def universal(bits, symbols=None):
+    genrot([bits[0]], symbols[:3])
+    genrot([bits[1]], symbols[3:6])
+
+    qml.CNOT(wires=[bits[1], bits[0]])
+
+    qml.RZ(symbols[6], wires=bits[0])
+    qml.RY(symbols[7], wires=bits[1])
+
+    qml.CNOT(wires=[bits[0], bits[1]])
+
+    qml.RY(symbols[8], wires=bits[1])
+
+    qml.CNOT(wires=[bits[1], bits[0]])
+
+    genrot([bits[0]], symbols[9:12])
+    genrot([bits[1]], symbols[12:])
+
+
 # Pooling ansatz
 def poolg(bits, symbols): 
     qml.CRZ(symbols[0], wires=[bits[0], bits[1]])
@@ -55,14 +79,27 @@ n_params = {
     'a': 2,
     'b': 2,
     'g': 10,
+    'universal': 15,
     'poolg': 2,
     'cnot': 0
 }
 
 
-## Hierarchies
+def num_layers(qubits):
+    # Returns the number of layers assuming each layer halves its available qubits
+    return (qubits - 1).bit_length()
 
-def get_qcnn(conv, pool, stride=1, step=1, offset=0, filter="right", wires=8, share_weights=True):
+def get_num_params(conv, pool, qubits):
+    layers = num_layers(qubits)
+
+    pool_n_symbols = n_params[pool.__name__]
+    conv_n_symbols = n_params[conv.__name__]
+
+    return layers * (pool_n_symbols + conv_n_symbols)
+
+
+## Hierarchies
+def get_qcnn(conv, pool, stride=1, step=1, offset=0, filter="01", wires=8, share_weights=True):
     # Por ahora todas los ansatzs son de aridad 2 asi que se queda asi de momento
     pool_n_symbols = n_params[pool.__name__]
     pool_map = Qunitary(function=pool, n_symbols=pool_n_symbols, arity=2)
@@ -92,7 +129,7 @@ def get_circuit(qcnn, device, interface):
     def circuit(x, symbols):
         qcnn.set_symbols(symbols)
 
-        qml.AmplitudeEmbedding(features=x, wires=qcnn.tail.Q, normalize=True)
+        qml.AmplitudeEmbedding(features=x, wires=qcnn.tail.Q, normalize=True, pad_with=0)
         qcnn(backend="pennylane")  # This executes the compute graph in order
         
         M = [[0, 0], [0, 1]]

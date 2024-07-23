@@ -4,25 +4,34 @@ import optax
 import pandas as pd
 
 # from loader import *
-from architecture import get_circuit, get_qcnn, a, b, g, poolg
+from architecture import get_circuit, get_qcnn, a, b, g, universal, poolg, get_num_params
 import time
+import wandb
 
 from biofind import run_random_search
+from loader import get_spectrogram_dataset
+
+import sys
 
 from sklearn.metrics import balanced_accuracy_score
+
+from functools import partial
 
 # https://pennylane.ai/qml/demos/tutorial_How_to_optimize_QML_model_using_JAX_and_JAXopt/
 # https://pennylane.ai/qml/demos/tutorial_How_to_optimize_QML_model_using_JAX_and_Optax/
 
 device = 'default.qubit'
 interface = 'jax'
-circuit = get_circuit(get_qcnn(g, poolg, step=2), device, interface)
+circuit = get_circuit(get_qcnn(universal, poolg), device, interface)
 
-opt = optax.adam(learning_rate=0.1)
+circuit_g = get_circuit(get_qcnn(g, poolg), device, interface)
+circuit_u = get_circuit(get_qcnn(universal, poolg), device, interface)
 
 circuit = jax.jit(jax.vmap(circuit, in_axes=(0, None)))
 
-@jax.jit
+opt = optax.adam(learning_rate=0.01)
+
+@partial(jax.jit, static_argnames=['epsilon'])
 def cross_entropy(predictions, targets, epsilon=1e-12):
     predictions = jnp.clip(predictions, epsilon, 1. - epsilon)
     # N = predictions.shape[0]
@@ -35,9 +44,10 @@ def cross_entropy(predictions, targets, epsilon=1e-12):
 def loss_fn(params, data, targets):
     predictions = circuit(data, params)
 
+    # jax.debug.print("preds: {predictions}", predictions=predictions)
+
     loss = cross_entropy(predictions, targets)
     # loss = jnp.mean(optax.losses.sigmoid_binary_cross_entropy(predictions, targets))
-    # jax.debug.print("loss_type: {type}", type=predictions.dtype)
     
     return loss
 
@@ -46,11 +56,33 @@ value_and_grad_fn = jax.value_and_grad(loss_fn)
 ## completely jitted
 @jax.jit
 def update_step_jit(i, args):
-    params, opt_state, data, targets, print_training = args
+    params, opt_state, data, targets, print_training, data_test, metrics = args
+
+    # jax.debug.print("nans: {params} ", params=params)
 
     loss_val, grads = value_and_grad_fn(params, data, targets)
     updates, opt_state = opt.update(grads, opt_state)
     params = optax.apply_updates(params, updates)
+
+    ### Loggear metricas
+    # x = x.at[idx].set(y)
+    metrics = metrics.at[0, i].set(loss_val)
+    # metrics['loss'][i] = loss_val
+
+    y_hat = circuit(data_test.x_test, params)
+    y_hat = jnp.where(y_hat >= 0.5, 1, 0)
+    test_accuracy = jnp.mean(jnp.where(y_hat == data_test.y_test, 1, 0))
+
+    metrics = metrics.at[1, i].set(test_accuracy)
+    # metrics['test_acc'][i] = test_accuracy
+
+    y_hat = circuit(data, params)
+    y_hat = jnp.where(y_hat >= 0.5, 1, 0)
+    train_accuracy = jnp.mean(jnp.where(y_hat == targets, 1, 0))
+
+    metrics = metrics.at[2, i].set(train_accuracy)
+    # metrics['train_acc'][i] = train_accuracy
+    ###
 
     def print_fn():
         jax.debug.print("Step: {i}  Loss: {loss_val}", i=i, loss_val=loss_val)
@@ -64,33 +96,39 @@ def update_step_jit(i, args):
     # if print_training=True, print the loss every 5 steps
     jax.lax.cond((jnp.mod(i, 1) == 0) & print_training, print_fn, lambda: None)
 
-    return (params, opt_state, data, targets, print_training)
+    return (params, opt_state, data, targets, print_training, data_test, metrics)
 
 @jax.jit
-def optimization_jit(params, data, targets, epochs, print_training=False):
+def optimization_jit(params, data, targets, epochs, data_test, metrics, print_training=False):
     opt_state = opt.init(params)
-    args = (params, opt_state, data, targets, print_training)
-    (params, opt_state, _, _, _) = jax.lax.fori_loop(0, epochs, update_step_jit, args)
+    args = (params, opt_state, data, targets, print_training, data_test, metrics)
+    (params, opt_state, _, _, _, data_test, metrics) = jax.lax.fori_loop(0, epochs, update_step_jit, args)
 
-    return params
+    return params, metrics
 
-def run_jax(ds, epochs, key, verbose=False):
+def run_jax(ds, epochs, lr, key, qubits, verbose=False):
     key, subkey = jax.random.split(key)
 
+    # jnp.set_printoptions(threshold=sys.maxsize)
     # dataset preparation
     data = ds.x_train
     targets = ds.y_train
 
+    # metrics = { key : jnp.zeros(epochs) for key in ['loss', 'train_acc', 'test_acc'] }
+    metrics = jnp.zeros((3, epochs))
+
     # initial parameters
-    params = jax.random.uniform(subkey, shape=(36,))*jnp.pi
+    num_params = get_num_params(universal, poolg, qubits)
+    # num_params = 238
+    params = jax.random.uniform(subkey, shape=(num_params,))*jnp.pi
+
     t0 = time.time()
-    # partial_accuracy, params = run_random_search(fds.x, fds.y, key, 500, verbose) 
-
-    # print(partial_accuracy)
-
     # training loop
-    params = optimization_jit(params, data, targets, epochs, print_training=verbose)
+    params, metrics = optimization_jit(params, data, targets, epochs, ds, metrics, print_training=verbose)
     trtime = time.time() - t0
+
+    for i in range(epochs):
+        wandb.log({ key : metrics[j][i] for j, key in enumerate(['loss', 'test_acc', 'train_acc'])})
 
     # get predictions
     y_hat = circuit(ds.x_test, params)
@@ -101,14 +139,12 @@ def run_jax(ds, epochs, key, verbose=False):
 
     accuracy = jnp.mean(jnp.where(y_hat == ds.y_test, 1, 0))
     
-    bal_acc=balanced_accuracy_score(ds.y_test, y_hat)
-    print(bal_acc)
+    # bal_acc=balanced_accuracy_score(ds.y_test, y_hat)
+    # print(bal_acc)
 
     return accuracy, params, trtime, key
 
-
-## Testing grounds
-if __name__ == "__main__":
+def main():
     runs = 1
     epochs = 5
 
@@ -211,3 +247,23 @@ if __name__ == "__main__":
 
     figure = heatmap.get_figure()
     figure.savefig(f'heatmap_genres_jax.png', dpi=400)
+
+## Testing grounds
+if __name__ == "__main__":
+    #main()
+
+    hhds = get_spectrogram_dataset(['hiphop'])
+
+    rng = jax.random.PRNGKey(0)
+    key, _ = jax.random.split(rng)
+    key, subkey = jax.random.split(key)
+
+    params = jax.random.uniform(subkey, shape=(51,))*jnp.pi
+
+    import tensorflow as tf
+    import numpy as np
+    X_resize = tf.image.resize(hhds[0][..., np.newaxis][:], (256, 1)).numpy()
+    X_squeezed = tf.squeeze(X_resize).numpy()
+    # print(X_squeezed)
+    print(np.argwhere(np.isnan(circuit_g(X_squeezed, params))))
+    print(X_squeezed[np.argwhere(np.isnan(circuit_g(X_squeezed, params)))])
