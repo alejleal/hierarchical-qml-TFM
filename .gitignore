@@ -3,6 +3,7 @@
 /images
 /PSO
 /old
+/wandb
 
 *.sh
 slurm-*.out
