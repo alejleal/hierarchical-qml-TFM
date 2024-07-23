@@ -12,8 +12,13 @@ import tensorflow as tf
 BASEPATH = "/home/alejandrolc/QuantumSpain/AutoQML/Data"
 genres = "genres_original"
 GENRES_3SEC = "genres_3sec"
+FULL_GENRES_3SEC = "full_genres_3sec"
+FULL_IMAGES_3SEC = "full_images_3sec"
 IMAGES = "images_3sec_original"
 AUDIO_GENRES_BASEPATH =f"{BASEPATH}/{GENRES_3SEC}"
+FULL_AUDIO_GENRES_BASEPATH =f"{BASEPATH}/{FULL_IMAGES_3SEC}"
+
+
 
 class ImageResize(BaseEstimator, TransformerMixin):
     """
@@ -49,6 +54,32 @@ def preprocess_audio():
             mel = np.array(librosa.power_to_db(mel, ref=np.max), dtype='float64')
             
             np.savetxt(f"{BASEPATH}/{IMAGES}/{genre}/{audio[:len(audio)-4]}.csv", mel, delimiter=',')
+
+def divide_audio():
+    for genre in os.listdir(AUDIO_GENRES_BASEPATH):
+        AUDIO_GENRES_PATH = f"{AUDIO_GENRES_BASEPATH}/{genre}"
+
+        FULL_AUDIO_GENRE_BASEPATH = f"{FULL_AUDIO_GENRES_BASEPATH}/{genre}"
+
+        if not os.path.isdir(FULL_AUDIO_GENRE_BASEPATH):
+            os.makedirs(FULL_AUDIO_GENRE_BASEPATH)
+
+        for f in os.listdir(FULL_AUDIO_GENRE_BASEPATH):
+            os.remove(f"{FULL_AUDIO_GENRE_BASEPATH}/{f}")
+
+        for audio in os.listdir(AUDIO_GENRES_PATH):
+            AUDIO_PATH = f"{AUDIO_GENRES_PATH}/{audio}"
+            y, sr = librosa.load(AUDIO_PATH)
+
+            # print(y.shape)
+            shift = y.shape[0]//10
+        
+            for i in range(10):
+                mel = librosa.feature.melspectrogram(y=y[i*shift:(i+1)*shift], sr=sr)
+
+                mel = np.array(librosa.power_to_db(mel, ref=np.max), dtype='float64')
+                
+                np.savetxt(f"{FULL_AUDIO_GENRE_BASEPATH}/{audio[:len(audio)-4]}{i}.csv", mel, delimiter=',')
 
 def preprocess_yaseen():
     BASEPATH = "/home/alejandrolc/QuantumSpain/AutoQML/Data/Yaseen"
@@ -87,16 +118,17 @@ def preprocess_yaseen():
 def get_spectrogram_dataset(genres=["country", "rock"]):
     x, y = [], []
 
-    IMAGES_PATH =f"{BASEPATH}/{IMAGES}"
+    IMAGES_PATH =f"{BASEPATH}/{FULL_IMAGES_3SEC}"   # FULL_IMAGES_3SEC
     for genre in genres:
         IMAGE_GENRE_PATH = f"{IMAGES_PATH}/{genre}"
         for image in os.listdir(IMAGE_GENRE_PATH):
             IMAGE_PATH = f"{IMAGE_GENRE_PATH}/{image}"
 
             img_array = np.array(np.loadtxt(IMAGE_PATH, dtype='float64', delimiter=','))
-
-            x.append(img_array)
-            y.append(0 if genre == genres[0] else 1)
+            
+            if np.any(img_array):
+                x.append(img_array)
+                y.append(0 if genre == genres[0] else 1)
 
     y = np.array(y)
     x = np.array(x)
@@ -222,4 +254,6 @@ def full_dataset(genre_pair):
 
 if __name__ == "__main__":
     # preprocess_yaseen()
+    divide_audio()
+    # preprocess_audio()
     pass
