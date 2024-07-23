@@ -12,7 +12,7 @@ from loader import dataset, full_dataset, dataset_yaseen
 # from architecture import *
 from pennylane_torch import run_torch
 from pennylane_jax import run_jax
-from QuantumSpain.AutoQML.Hierarqcal.torch_cnn import run_torch_cnn
+from torch_cnn import run_torch_cnn
 from logger import *
 
 genres = ["blues", "classical", "country", "disco", "hiphop", "jazz", "metal", "pop", "reggae", "rock"] # "hiphop" da problemas??
@@ -101,7 +101,7 @@ if __name__ == "__main__":
             'lr': 0.1,
             'combinations': genre_combinations,
             'graph': True,
-            'heatmap_name': 'share_weights_false',
+            'heatmap_name': 'wandb_test_reduced',
             'verbose': True,
             'id': sys.argv[1] if len(sys.argv) > 1 else None
         }
