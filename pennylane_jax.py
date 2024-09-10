@@ -4,7 +4,7 @@ import optax
 import pandas as pd
 
 # from loader import *
-from architecture import get_circuit, get_qcnn, a, b, g, universal, poolg, get_num_params
+from architecture import get_circuit, get_qcnn, a, b, g, universal, poolg, get_num_params, qcnn_12, qcnn_center
 import time
 import wandb
 
@@ -22,16 +22,40 @@ from functools import partial
 
 device = 'default.qubit'
 interface = 'jax'
-circuit = get_circuit(get_qcnn(universal, poolg), device, interface)
+# circuit = get_circuit(get_qcnn(universal, poolg), device, interface)
+# circuit = get_circuit(qcnn_12(universal, poolg), device, interface)
+
+# 12 qubits
+conv = universal
+pool = poolg
+hierq = qcnn_12
+wires = 12
+
+# 8 qubits
+conv = g
+hierq = get_qcnn
+wires = 8
+
+# 9 qubits
+# hierq = qcnn_center
+# wires = 9
+
+# # 10 qubits
+# hierq = qcnn_12
+# wires = 10
+
+
+qcnn = hierq(conv, pool, wires=wires, share_weights=True)
+circuit = get_circuit(qcnn, device, interface)
 
 circuit_g = get_circuit(get_qcnn(g, poolg), device, interface)
 circuit_u = get_circuit(get_qcnn(universal, poolg), device, interface)
 
-circuit = jax.jit(jax.vmap(circuit, in_axes=(0, None)))
+circuit = jax.vmap(circuit, in_axes=(0, None))
 
 opt = optax.adam(learning_rate=0.01)
 
-@partial(jax.jit, static_argnames=['epsilon'])
+@jax.jit
 def cross_entropy(predictions, targets, epsilon=1e-12):
     predictions = jnp.clip(predictions, epsilon, 1. - epsilon)
     # N = predictions.shape[0]
@@ -44,9 +68,8 @@ def cross_entropy(predictions, targets, epsilon=1e-12):
 def loss_fn(params, data, targets):
     predictions = circuit(data, params)
 
-    # jax.debug.print("preds: {predictions}", predictions=predictions)
-
     loss = cross_entropy(predictions, targets)
+    # jax.debug.print("preds: {predictions}", predictions=predictions.shape)
     # loss = jnp.mean(optax.losses.sigmoid_binary_cross_entropy(predictions, targets))
     
     return loss
@@ -118,7 +141,7 @@ def run_jax(ds, epochs, lr, key, qubits, verbose=False):
     metrics = jnp.zeros((3, epochs))
 
     # initial parameters
-    num_params = get_num_params(universal, poolg, qubits)
+    num_params = qcnn.n_symbols # 17*6 #(17*4=qcnn12) #
     # num_params = 238
     params = jax.random.uniform(subkey, shape=(num_params,))*jnp.pi
 
@@ -127,6 +150,15 @@ def run_jax(ds, epochs, lr, key, qubits, verbose=False):
     params, metrics = optimization_jit(params, data, targets, epochs, ds, metrics, print_training=verbose)
     trtime = time.time() - t0
 
+    ## Logging metrics
+    circuit_log = {
+        "hierarchy": hierq.__name__,
+        "convolution": conv.__name__,
+        "pooling": pool.__name__,
+        "qubits": qubits,
+        "num_params": num_params
+    }
+    wandb.run.config["circuit"] = circuit_log
     for i in range(epochs):
         wandb.log({ key : metrics[j][i] for j, key in enumerate(['loss', 'test_acc', 'train_acc'])})
 

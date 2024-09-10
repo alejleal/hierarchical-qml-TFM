@@ -98,13 +98,15 @@ def get_num_params(conv, pool, qubits):
     return layers * (pool_n_symbols + conv_n_symbols)
 
 
-## Hierarchies
+### Hierarchies
+
 def get_qcnn(conv, pool, stride=1, step=1, offset=0, filter="01", wires=8, share_weights=True):
     # Por ahora todas los ansatzs son de aridad 2 asi que se queda asi de momento
     pool_n_symbols = n_params[pool.__name__]
     pool_map = Qunitary(function=pool, n_symbols=pool_n_symbols, arity=2)
 
     conv_n_symbols = n_params[conv.__name__]
+
     qcnn = (Qinit(range(wires)) + 
             (Qcycle(
                 stride=stride,
@@ -120,6 +122,60 @@ def get_qcnn(conv, pool, stride=1, step=1, offset=0, filter="01", wires=8, share
 
     return qcnn
 
+def qcnn_12(conv, pool, stride=1, step=1, offset=0, filter="01", wires=12, share_weights=True):
+    pool_n_symbols = n_params[pool.__name__]
+    pool_map = Qunitary(function=pool, n_symbols=pool_n_symbols, arity=2)
+
+    conv_n_symbols = n_params[conv.__name__]
+
+    first_conv = Qcycle(stride=stride, step=step, offset=offset,
+                        mapping=Qunitary(conv, n_symbols=conv_n_symbols, arity=2),
+                        share_weights=share_weights)
+    
+    layers = (wires - 1).bit_length() - 1
+    cut = (wires - 2**layers)//2
+    ones = "1"*cut
+
+    first_pool = Qmask(f"{ones}0*0{ones}", mapping=pool_map)
+
+    qcnn = Qinit(range(wires)) + first_conv + first_pool + \
+        (Qcycle(
+                stride=stride,
+                step=step,
+                offset=offset,
+                mapping=Qunitary(conv, n_symbols=conv_n_symbols, arity=2),
+                share_weights=share_weights)
+            + Qmask(filter, mapping=pool_map)
+        )   \
+        * (wires - cut*2 - 1).bit_length() # Consigue el ceil(log2(wires)) para el numero de capas
+
+    return qcnn
+
+def qcnn_center(conv, pool, stride=1, step=1, offset=0, wires=8, share_weights=True):
+    # Por ahora todas los ansatzs son de aridad 2 asi que se queda asi de momento
+    pool_n_symbols = n_params[pool.__name__]
+    pool_map = Qunitary(function=pool, n_symbols=pool_n_symbols, arity=2)
+
+    conv_n_symbols = n_params[conv.__name__]
+
+    qcnn = (Qinit(range(wires)) + 
+            (Qcycle(
+                stride=stride,
+                step=step,
+                offset=offset,
+                mapping=Qunitary(conv, n_symbols=conv_n_symbols, arity=2),
+                share_weights=share_weights
+            )
+            + Qmask("1*1", mapping=pool_map)
+        )
+        * (wires//2) # Consigue el ceil(log2(wires)) para el numero de capas
+        + Qmask("01", mapping=pool_map)
+    )
+
+    return qcnn
+
+
+### Circuits
 
 def get_circuit(qcnn, device, interface):
     dev = qml.device(device, wires=qcnn.tail.Q)
@@ -137,68 +193,16 @@ def get_circuit(qcnn, device, interface):
         return qml.probs(wires=qcnn.head.Q[0])
     return circuit
 
-# qcnn = get_qcnn(g, poolg)
-
-# # @jax.jit
-# @qml.qnode(dev, interface=interface)
-# def circuit(data, weights):
-#     # data embedding
-#     qml.AmplitudeEmbedding(features=data, wires=range(n_wires), normalize=True)
-
-#     qcnn.set_symbols(weights)
-#     qcnn(backend="pennylane")
-
-#     # state_0 = [[1], [0]]
-#     M = [[0, 0], [0, 1]]
-#     return qml.expval(qml.Hermitian(M, wires = qcnn.head.Q[0]))
-#     return qml.probs(wires=qcnn.head.Q[0])
 
 if __name__ == "__main__":
     device = "default.qubit.torch"
     interface = 'torch'
-    wires = 4
-    qcnn = get_qcnn(a, cnot, wires=wires)
+    wires = 18
+
+    # qcnn = qcnn_center(a, cnot, wires=wires)
+    qcnn = qcnn_12(a, cnot, wires=wires)
+
     circuit = get_circuit(qcnn, device, interface)
 
-
-    drawer = qml.drawer.MPLDrawer(n_wires=4, n_layers=8)
-
-    drawer.label(range(4))
-
-    embed_box_options = {'facecolor': 'green', 'edgecolor': 'darkgreen', 'linewidth': 3}
-    conv_box_options = {'facecolor': 'lightcoral', 'edgecolor': 'maroon', 'linewidth': 3}
-    pool_options = {'linewidth': 3, 'color': 'teal'}
-    text_options = {'fontsize': 'xx-large', 'color': 'white'}
-
-    # drawer.box_gate(layer=0, wires=[0, 1, 2, 3], text=r"$|\Psi\rangle$", box_options=embed_box_options)
-    drawer.box_gate(layer=0, wires=[0, 1], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
-    drawer.box_gate(layer=1, wires=[1, 2], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
-    drawer.box_gate(layer=2, wires=[2, 3], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
-    drawer.box_gate(layer=3, wires=[0, 3], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
-
-    # drawer.Barrier()
-
-    drawer.CNOT(layer=4, wires=(2, 0), options=pool_options)
-    drawer.CNOT(layer=5, wires=(3, 1), options=pool_options)
-
-    drawer.box_gate(layer=6, wires=[0, 1], text=r"$U(\theta)$", box_options=conv_box_options, text_options=text_options)
-
-    drawer.CNOT(layer=7, wires=(1, 0), options=pool_options)
-
-    # drawer.measure(layer=7, wires=0)
-
-    # drawer.ctrl(layer=3, wires=[1, 3], control_values=[True, False])
-    # drawer.box_gate(
-    #     layer=3, wires=2, text="H", box_options={"zorder": 4}, text_options={"zorder": 5}
-    # )
-
-    # drawer.ctrl(layer=4, wires=[1, 2])
-
-    # drawer.fig.suptitle('My Circuit', fontsize='xx-large')
-
-    drawer.fig.savefig("./images/circuit_test.png")
-
-
-    # fig, ax = qml.draw_mpl(circuit)(range(2**wires), range(36))
-    # fig.savefig("./images/circuit_test.png")
-    # # fig.show()
+    fig, ax = qml.draw_mpl(circuit)(range(2**wires), range(100), universal)
+    fig.savefig(f"./images/ansatz_{universal.__name__}.png")
