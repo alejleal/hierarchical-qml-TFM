@@ -10,6 +10,7 @@ slurm-*.out
 
 *.whl
 *.txt
+!requirements.txt
 
 biofind.py
 qml_example.py
